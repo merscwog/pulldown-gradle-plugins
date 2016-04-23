@@ -1,0 +1,110 @@
+buildscript {
+  repositories {
+    jcenter()
+  }
+
+  dependencies {
+    classpath 'com.google.guava:guava:19.0'
+  }
+}
+
+plugins {
+  id 'de.undercouch.download' version '2.1.0'
+}
+
+import groovy.util.XmlSlurper
+import groovy.json.JsonSlurper
+import com.google.common.net.UrlEscapers;
+
+def featureNS = 'http://apache.org/xml/features'
+ext.basePluginUrl = 'https://plugins.gradle.org'
+
+// WTF?: The plugins.gradle.org website isn't valid XML
+//       Two of the 'link' statements are missing trailing "/" for "/>"
+task readWebSite {
+  doLast {
+    boolean morePlugins = true
+    int pageNum = 0
+    def gavsMap = [:]
+    while (morePlugins) {     
+      def urlStr = "${basePluginUrl}/search?page=${pageNum}"
+      def currPage = urlStr.toURL().text
+
+      StringBuffer sb = new StringBuffer()
+      currPage.eachLine { line ->
+        if (line.startsWith('<link')  ||
+	    line.startsWith('<meta')  ||
+	    line.startsWith('&nbsp;') ||
+	    line.startsWith('<p class="copyright">&copy;')) {
+	  return
+	}
+	sb.append(line)
+      }
+
+      def xmlSlurper = [validating: false,
+                        namespaceAware: true,
+		     	allowDocTypeDeclaration: false] as XmlSlurper
+      xmlSlurper.setFeature("${featureNS}/disallow-doctype-decl", false) 
+      xmlSlurper.setFeature("${featureNS}/nonvalidating/load-external-dtd",
+                            false)
+
+      def pageXml = xmlSlurper.parseText(sb.toString())
+
+      def pluginTable = pageXml.body.div.div.div.div[2].div.table.tbody
+
+      pluginTable.children().each { tr ->
+        def pluginData = tr.td[0]
+	if (pluginData == 'No plugins found.') {
+	  morePlugins = false
+	  return
+	}
+
+        def pluginId          = tr.td[0].h3.toString()
+	def pluginVersion     = tr.td[1].span[0].toString()
+	def pluginReleaseDate = (tr.td[1].span[1].toString() - ')' - '(')
+
+	//println "${pluginId} -> ${pluginVersion} -> ${pluginReleaseDate}"
+	
+	def gradleVersion = GradleVersion.current().getVersion()
+	def pathSegmentEscaper = UrlEscapers.urlPathSegmentEscaper()
+	def escapedId = pathSegmentEscaper.escape(pluginId)
+	def escapedVer = pathSegmentEscaper.escape(pluginVersion)
+	def escapedGradleVer = pathSegmentEscaper.escape(gradleVersion)
+
+	def url = "https://plugins.gradle.org/api/gradle/${escapedGradleVer}/plugin/use/${escapedId}/${escapedVer}"
+	def json = new JsonSlurper().parseText(url.toURL().text)
+	//println "${json.implementation.gav}"
+	gavsMap["${json.implementation.gav}"] = "${json.implementation.repo}"
+      }
+
+      // FIXME: just remove when done
+      //morePlugins = false
+      ++pageNum
+    }
+
+    gavsMap.each { gav, repo ->
+      def (org, artifact, version) = gav.split(':')
+
+      def orgPath = org.replaceAll('\\.', '/')
+      def downloadDir = new File("${buildDir}/plugins/${orgPath}/${artifact}/${version}")
+      //println downloadDir
+      //println repo
+
+      def downloadBase = "${repo}/${orgPath}/${artifact}/${version}"
+
+      ['pom', 'jar'].each {
+        def file = "${artifact}-${version}.${it}"
+	//println "${downloadBase}/${file} --> ${downloadDir}"
+	try {
+          download {
+	    src "${downloadBase}/${file}"
+	    dest "${downloadDir}/${file}"
+	  }
+        } catch (Exception e) {
+	  println e.message
+	}
+      }
+    }
+    //println gavsMap
+  }
+}
