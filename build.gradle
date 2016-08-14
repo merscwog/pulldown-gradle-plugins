@@ -19,6 +19,13 @@ import com.google.common.net.UrlEscapers;
 def featureNS = 'http://apache.org/xml/features'
 ext.basePluginUrl = 'https://plugins.gradle.org'
 
+import java.text.DateFormat
+import java.text.SimpleDateFormat
+DateFormat dateFormat = new SimpleDateFormat('dd MMMM yyyy')
+
+ext.earliestDate = dateFormat.parse('20 July 2016')
+println ext.earliestDate
+
 // WTF?: The plugins.gradle.org website isn't valid XML
 //       Two of the 'link' statements are missing trailing "/" for "/>"
 task readWebSite {
@@ -26,6 +33,11 @@ task readWebSite {
     boolean morePlugins = true
     int pageNum = 0
     def gavsMap = [:]
+
+    File receipt = new File("${buildDir}/plugins_receipt.txt")
+    mkdir "${buildDir}"
+    receipt.text = "${new Date()}\n"
+
     while (morePlugins) {     
       def urlStr = "${basePluginUrl}/search?page=${pageNum}"
       def currPage = urlStr.toURL().text
@@ -63,7 +75,21 @@ task readWebSite {
 	def pluginVersion     = tr.td[1].span[0].toString()
 	def pluginReleaseDate = (tr.td[1].span[1].toString() - ')' - '(')
 
-	//println "${pluginId} -> ${pluginVersion} -> ${pluginReleaseDate}"
+	if (pluginVersion.endsWith('-SNAPSHOT')) {
+	  println "# ${pluginId} -> ${pluginVersion} -> ${pluginReleaseDate}"
+	  return
+	}
+
+	def parsedReleaseDate = dateFormat.parse(pluginReleaseDate)
+	if (parsedReleaseDate.before(earliestDate)) {
+	  // Do not want things with dates earlier than earliest specified
+	  println "! ${pluginId} -> ${pluginVersion} -> ${pluginReleaseDate}"
+	  morePlugins = false
+	  return
+	}
+
+	receipt << "${pluginId} -> ${pluginVersion} -> ${pluginReleaseDate}\n"
+	println "${pluginId} -> ${pluginVersion} -> ${pluginReleaseDate}"
 	
 	def gradleVersion = GradleVersion.current().getVersion()
 	def pathSegmentEscaper = UrlEscapers.urlPathSegmentEscaper()
@@ -77,10 +103,13 @@ task readWebSite {
 	gavsMap["${json.implementation.gav}"] = "${json.implementation.repo}"
       }
 
-      // FIXME: just remove when done
+      // TESTING: just remove when done
       //morePlugins = false
       ++pageNum
     }
+
+    // TESTING: Want to break out without actually downloading anything
+    //return
 
     gavsMap.each { gav, repo ->
       def (org, artifact, version) = gav.split(':')
