@@ -4,12 +4,13 @@ buildscript {
   }
 
   dependencies {
-    classpath 'com.google.guava:guava:19.0'
+    classpath 'com.google.guava:guava:20.0'
   }
 }
 
 plugins {
-  id 'de.undercouch.download' version '2.1.0'
+  id 'base'
+  id 'de.undercouch.download' version '3.1.2'
 }
 
 import groovy.util.XmlSlurper
@@ -23,7 +24,14 @@ import java.text.DateFormat
 import java.text.SimpleDateFormat
 DateFormat dateFormat = new SimpleDateFormat('dd MMMM yyyy')
 
-ext.earliestDate = dateFormat.parse('20 July 2016')
+String dateToCheck = findProperty('earliestDate') ?: '01 January 1970'
+try {
+  ext.earliestDate = dateFormat.parse(dateToCheck)
+}
+catch (java.text.ParseException pe) {
+  throw new ProjectConfigurationException("Bad date: ${dateToCheck}", pe)
+}
+
 println ext.earliestDate
 
 // WTF?: The plugins.gradle.org website isn't valid XML
@@ -128,6 +136,7 @@ task readWebSite {
           download {
 	    src "${downloadBase}/${file}"
 	    dest "${downloadDir}/${file}"
+	    onlyIfNewer true
 	  }
         } catch (Exception e) {
 	  println e.message
@@ -136,4 +145,8 @@ task readWebSite {
     }
     //println gavsMap
   }
+}
+
+wrapper {
+  gradleVersion = '3.2.1'
 }
